@@ -51,6 +51,7 @@ class AuxVisionRepeatTests(unittest.TestCase):
             "_configured_aux_model": lambda *a: "MiniMax-M3",
             "vision_analyze_tool": aux,
             "json": json,
+            "logger": type("FakeLogger", (), {"info": staticmethod(lambda *args: None)})(),
         }
         exec(compile(ast.Module(body=[func], type_ignores=[]), str(SRC), "exec"), scope)
         return scope["_handle_vision_analyze"], calls, slots, released
