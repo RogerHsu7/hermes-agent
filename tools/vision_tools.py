@@ -1024,12 +1024,30 @@ async def _handle_vision_analyze(args: dict[str, Any], **kw: Any) -> str:
         logger.info("vision_analyze: native fast path")
         return await _vision_analyze_native(image_url, question, task_id=task_id, region=region)
 
-    # Legacy path: aux LLM describes the image and we return its text.
+    # Legacy aux-vision path must honor the SAME per-session source budget as
+    # native embeds. Without this, a model can re-crop/re-analyze one worksheet
+    # indefinitely; the prior cap covered only the native route.
+    refusal = _repeat_refusal(image_url)
+    if refusal is not None:
+        return refusal
     full_prompt = (
         "Fully describe and explain everything about this image, then answer the "
         f"following question:\n\n{question}")
     model = _configured_aux_model(("vision",), ("AUXILIARY_VISION_MODEL",))
-    return await vision_analyze_tool(image_url, full_prompt, model, task_id=task_id, region=region)
+    try:
+        result = await vision_analyze_tool(image_url, full_prompt, model, task_id=task_id, region=region)
+    except BaseException:
+        _release_embed(image_url)
+        raise
+    # Failed analyses shouldn't consume the retry allowance. A completed
+    # analysis, even a confusing OCR result, does consume one allowance.
+    try:
+        succeeded = json.loads(result).get("success") is True
+    except (TypeError, ValueError, AttributeError):
+        succeeded = False
+    if not succeeded:
+        _release_embed(image_url)
+    return result
 
 
 registry.register(
